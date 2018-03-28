@@ -11,10 +11,13 @@
 #else
 #include <GL/glew.h>
 #endif
+
 #include <GLFW/glfw3.h>
 #include <string>
 #include "Cube.h"
 #include "shader.h"
+#include "Model.h"
+
 #include "GLFWStarterProject/OBJObject.h"
 #include "GLFWStarterProject/Node.h"
 
@@ -53,9 +56,6 @@ public:
 	static int height;
 	static glm::mat4 P; // P for projection
 	static glm::mat4 V; // V for view
-	static s_directionalLight* currentDirectionalLight;
-	static s_pointLight* currentPointLight;
-	static s_spotLight* currentSpotLight;
 	static int time;
 	static std::vector<GLfloat> Window::vertices;
 

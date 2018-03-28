@@ -1,5 +1,6 @@
-#include "window.h"
+#include "Window.h"
 
+const char* modelPath = "Spencer mansion hall.obj";
 const char* window_title = "Assignment 4";
 GLint shaderProgramPhong, shaderProgramSkybox, shaderProgramSSAO, shaderProgramDOF;
 
@@ -11,10 +12,11 @@ glm::vec3 cam_up(0.0f, 1.0f, 0.0f);			// up | What orientation "up" is
 int Window::width;
 int Window::height;
 
+bool enableDOF;
 bool keyHeld[1024];
 
 GLuint FBO, FBO2, FBO3, FBO4;
-GLuint texColor, texDepth, texNormal, texColor2;
+GLuint texColor, texDepth, texNormal, texColor2, texColor3, texColor4;
 GLuint VBO, VAO, EBO;
 std::vector<GLfloat> Window::vertices;
 
@@ -25,20 +27,18 @@ glm::mat4 Window::V;
 
 glm::mat4 toWorld;
 
+float planeInFocus = 1.0f;
 float yaw = -3.14f * 0.5f;
 float pitch = 0.0f;
 
 OBJObject* skybox;
-OBJObject* dragon;
-
-s_directionalLight directionalLight;
+Model* scene;
 
 Transform* sceneGraphRoot;
 Transform* armyTransform;
 
 unsigned int cubeTextureID;
 
-s_directionalLight* Window::currentDirectionalLight = &directionalLight;
 
 /** Load a ppm file from disk.
 @input filename The location of the PPM file.  If the file is not found, an error message
@@ -101,13 +101,12 @@ unsigned char* loadPPM(const char* filename, int& width, int& height)
 
 void Window::initialize_objects()
 {
-	directionalLight.color = glm::vec3(1.0, 1.0, 1.0);
-	directionalLight.direction = glm::normalize(glm::vec3(0.5, -0.5, 0.5));
-	directionalLight.enabled = 1;
-	directionalLight.ambientColor = glm::vec3(0.0);
 
 	skybox = new OBJObject(NULL, 0.0f, 0.0f, 0.0f, 0.3f, glm::vec3(0.0), glm::vec3(0.0), 1.0f);
-	dragon = new OBJObject("dragon.obj", 0.0f, 0.0f, 0.0f, 10.0f, glm::vec3(1.0, 0.0, 0.0), glm::vec3(1.0), 16.0f);
+	scene = new Model(modelPath);
+	//dragon = new OBJObject("dragon.obj", 0.0f, 0.0f, 0.0f, 10.0f, glm::vec3(1.0, 0.0, 0.0), glm::vec3(1.0), 16.0f);
+	//dragon2 = new OBJObject("dragon.obj", 0.0f, 00.0f, 50.0f, 10.0f, glm::vec3(1.0, 0.0, 0.0), glm::vec3(1.0), 16.0f);
+	//dragon3 = new OBJObject("dragon.obj", 20.0f, 0.0f, 0.0f, 10.0f, glm::vec3(1.0, 0.0, 0.0), glm::vec3(1.0), 16.0f);
 
 	shaderProgramPhong = LoadShaders("phong.vert", "phong.frag");
 	shaderProgramSkybox = LoadShaders("skybox.vert", "skybox.frag");
@@ -117,11 +116,13 @@ void Window::initialize_objects()
 	int twidth, theight;   // texture width/height [pixels]
 	unsigned char* tdata;  // texture pixel data
 
+	enableDOF = false;
+
 	// Cube texture
 	glGenTextures(1, &cubeTextureID);
 	glBindTexture(GL_TEXTURE_CUBE_MAP, cubeTextureID);
 
-	char* cubeFiles[] = {"cube_right.ppm", "cube_left.ppm", "cube_top.ppm", "cube_base.ppm" , "cube_front.ppm" , "cube_back.ppm" };
+	char* cubeFiles[] = {"right.ppm", "left.ppm", "top.ppm", "bottom.ppm" , "front.ppm" , "back.ppm" };
 
 	for (GLuint i = 0; i < 6; i++)
 	{
@@ -139,8 +140,9 @@ void Window::initialize_objects()
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
 
-	glDisable(GL_CULL_FACE);
+	glEnable(GL_CULL_FACE);
 	glCullFace(GL_BACK);
+	glDisable(GL_BLEND);
 
 	// Create array object and buffers. Remember to delete your buffers when the object is destroyed!
 	glGenVertexArrays(1, &VAO);
@@ -228,6 +230,35 @@ void Window::initialize_objects()
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColor2, 0);
 
+	// FBO 3
+	glGenFramebuffers(1, &FBO3);
+	glBindFramebuffer(GL_FRAMEBUFFER, FBO3);
+
+	// Creates a color texture and binds it to the framebuffer.
+	glGenTextures(1, &texColor3);
+	glBindTexture(GL_TEXTURE_2D, texColor3);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColor3, 0);
+
+	// FBO 4
+
+	glGenFramebuffers(1, &FBO4);
+	glBindFramebuffer(GL_FRAMEBUFFER, FBO4);
+
+	// Creates a color texture and binds it to the framebuffer.
+	glGenTextures(1, &texColor4);
+	glBindTexture(GL_TEXTURE_2D, texColor4);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, texColor4, 0);
+
 	if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE)
 	{
 		printf("Framebuffer is incomplete.\n");
@@ -238,6 +269,9 @@ void Window::initialize_objects()
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+
+	//glEnable(GL_ALPHA_TEST);
+	//glAlphaFunc(GL_GREATER, 0.5f)
 }
 
 // Treat this as a destructor function. Delete dynamically allocated memory here.
@@ -380,20 +414,31 @@ void Window::display_callback(GLFWwindow* window)
 		glUseProgram(shaderProgramSkybox);
 
 		glBindTexture(GL_TEXTURE_CUBE_MAP, cubeTextureID);
-
 		skybox->draw(V);
-	
+
 		glUseProgram(shaderProgramPhong);
 
-		directionalLight.direction = glm::normalize(glm::vec3(0.8f, -0.6f, -1.0f));
 
-		currentDirectionalLight = &directionalLight;
-		dragon->draw(V);
+		glUniform1i(glGetUniformLocation(shaderProgramPhong, "directionalLight.enabled"), false);
+		glUniform1i(glGetUniformLocation(shaderProgramPhong, "pointLight.enabled"), false);
+		glUniform1i(glGetUniformLocation(shaderProgramPhong, "spotLight.enabled"), false);
+
+		GLuint uCameraPosition = glGetUniformLocation(shaderProgramPhong, "cameraPosition");
+		glUniform3f(uCameraPosition, cam_pos.x, cam_pos.y, cam_pos.z);
+
+		GLuint uProjection = glGetUniformLocation(shaderProgramPhong, "projection");
+		GLuint uView = glGetUniformLocation(shaderProgramPhong, "view");
+		glUniformMatrix4fv(uProjection, 1, GL_FALSE, &P[0][0]);
+		glUniformMatrix4fv(uView, 1, GL_FALSE, &V[0][0]);
+
+		scene->draw(shaderProgramPhong);
+		//dragon->draw(V);
+		//dragon2->draw(glm::translate(V, glm::vec3(0.0f, 0.0f, 5.0f)));
 
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
 	glDisable(GL_DEPTH_TEST);
-
+/*
 	// SSAO effect ----------------------------------------------------------------------
 
 	glUseProgram(shaderProgramSSAO);
@@ -419,6 +464,7 @@ void Window::display_callback(GLFWwindow* window)
 		glUniform1i(glGetUniformLocation(shaderProgramSSAO, "debugMode"), 0);
 		toWorld = glm::mat4(1.0f);
 		glUniformMatrix4fv(glGetUniformLocation(shaderProgramSSAO, "modelMatrix"), 1, GL_FALSE, &toWorld[0][0]);
+		
 		glBindVertexArray(VAO);
 		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 		glBindVertexArray(0);
@@ -431,28 +477,77 @@ void Window::display_callback(GLFWwindow* window)
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, 0);
-
+*/
 	// DOF effect ----------------------------------------------------------------------
 
 	glUseProgram(shaderProgramDOF);
 
+	glUniform1i(glGetUniformLocation(shaderProgramDOF, "enabled"), enableDOF);
+
+	//horizontal blur
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, texColor2);
-	glUniform1i(glGetUniformLocation(shaderProgramDOF, "texColor2"), 0);
+	glBindTexture(GL_TEXTURE_2D, texColor);
+	glUniform1i(glGetUniformLocation(shaderProgramDOF, "texColor"), 0);
 
 	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, texDepth);
 	glUniform1i(glGetUniformLocation(shaderProgramDOF, "texDepth"), 1);
 
-	// Renders DOF result
-	glUniform1i(glGetUniformLocation(shaderProgramDOF, "debugMode"), 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, FBO3);
+
+		// Renders DOF result
+		glUniform1f(glGetUniformLocation(shaderProgramDOF, "textureWidth"), width);
+		glUniform1f(glGetUniformLocation(shaderProgramDOF, "textureHeight"), height);
+		glUniform1f(glGetUniformLocation(shaderProgramDOF, "aperture"), 10.0);
+		glUniform1f(glGetUniformLocation(shaderProgramDOF, "plane"), planeInFocus);
+		glUniform1f(glGetUniformLocation(shaderProgramDOF, "near"), 0.1f);
+		glUniform1f(glGetUniformLocation(shaderProgramDOF, "far"), 1030.0f);
+		glUniform1i(glGetUniformLocation(shaderProgramDOF, "horizontal"), 1);
+
+
+		GLenum buffers3[] = { GL_COLOR_ATTACHMENT0 };
+		glDrawBuffers(1, buffers3);
+
+		toWorld = glm::mat4(1.0f);
+		glUniformMatrix4fv(glGetUniformLocation(shaderProgramDOF, "modelMatrix"), 1, GL_FALSE, &toWorld[0][0]);
+		glBindVertexArray(VAO);
+		glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+		glBindVertexArray(0);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+
+	//vertcal blur
+
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, texColor3);
+	glUniform1i(glGetUniformLocation(shaderProgramDOF, "texColor"), 0);
+
+	glActiveTexture(GL_TEXTURE1);
+	glBindTexture(GL_TEXTURE_2D, texDepth);
+	glUniform1i(glGetUniformLocation(shaderProgramDOF, "texDepth"), 1);
+
+	glBindFramebuffer(GL_FRAMEBUFFER, FBO4);
+
+
+	glUniform1i(glGetUniformLocation(shaderProgramDOF, "horizontal"), 0);
+
+	glDrawBuffers(1, buffers3);
+
 	toWorld = glm::mat4(1.0f);
 	glUniformMatrix4fv(glGetUniformLocation(shaderProgramDOF, "modelMatrix"), 1, GL_FALSE, &toWorld[0][0]);
 	glBindVertexArray(VAO);
 	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 	glBindVertexArray(0);
 
+	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glActiveTexture(GL_TEXTURE1);
 	glBindTexture(GL_TEXTURE_2D, 0);
 
 	// Debug info ----------------------------------------------------------------------
@@ -460,7 +555,7 @@ void Window::display_callback(GLFWwindow* window)
 	glUseProgram(shaderProgramSSAO);
 
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, texColor);
+	glBindTexture(GL_TEXTURE_2D, texColor4);
 	glUniform1i(glGetUniformLocation(shaderProgramSSAO, "texColor"), 0);
 
 	glActiveTexture(GL_TEXTURE1);
@@ -472,6 +567,13 @@ void Window::display_callback(GLFWwindow* window)
 	glUniform1i(glGetUniformLocation(shaderProgramSSAO, "texDepth"), 2);
 
 	float scale = 0.2f;
+
+	glUniform1i(glGetUniformLocation(shaderProgramSSAO, "debugMode"), 0);
+	toWorld = glm::mat4(1.0f);
+	glUniformMatrix4fv(glGetUniformLocation(shaderProgramSSAO, "modelMatrix"), 1, GL_FALSE, &toWorld[0][0]);
+	glBindVertexArray(VAO);
+	glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+	glBindVertexArray(0);
 
 	// Renders normals
 	glUniform1i(glGetUniformLocation(shaderProgramSSAO, "debugMode"), 1);
@@ -495,12 +597,12 @@ void Window::display_callback(GLFWwindow* window)
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, 0);
-
+	
 	glEnable(GL_DEPTH_TEST);
 
 	if (glGetError() != GL_NO_ERROR)
 	{
-		printf("Error\n");
+		//printf("Error\n");
 	}
 
 	if (print)
@@ -558,6 +660,21 @@ void Window::key_callback(GLFWwindow* window, int key, int scancode, int action,
 		{
 			// Close the window. This causes the program to also terminate.
 			glfwSetWindowShouldClose(window, GL_TRUE);
+		}
+
+		if (key == GLFW_KEY_P) {
+			if (mods&GLFW_MOD_CONTROL) {
+				if (planeInFocus < 1000.0)
+					planeInFocus++;
+			}
+			else {
+				if (planeInFocus > 1.0) 
+					planeInFocus--;
+			}
+		}
+
+		if (key == GLFW_KEY_F3) {
+			enableDOF = !enableDOF;
 		}
 	}
 
